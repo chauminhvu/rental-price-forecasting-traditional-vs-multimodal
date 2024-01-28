@@ -1,5 +1,6 @@
 # .gitignore for Python, PyTorch, PostgreSQL, PyTorch Lightning, and MLflow projects
 data/
+*.log
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.pyc

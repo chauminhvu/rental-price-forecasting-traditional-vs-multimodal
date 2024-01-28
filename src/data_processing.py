@@ -4,43 +4,77 @@ import cupy as cp
 import pandas as pd
 
 
-def missing_values(df):
+def count_missing_values(data):
     """
-    Analyze and report the missing values in a pandas DataFrame.
+    Analyze and report the missing values in a pandas DataFrame or Series.
 
-    This function takes a pandas DataFrame as input, validates if it is a valid dataframe 
-    with at least one column, calculates the number of missing values for each column 
-    along with their percentages relative to total rows and returns this information in a new dataframe.
+    This function calculates the number of missing values for each column or the single column 
+    along with their percentages relative to total rows.
 
     Parameters:
-        df (pandas DataFrame): Input DataFrame to be analyzed.
+        data (pandas DataFrame or Series): Input DataFrame or Series to be analyzed.
 
     Returns:
-        pandas DataFrame: A report containing the missing value count and percentage
-        for each column, sorted by count descending.
+        pandas DataFrame: A report containing the sorted missing value count and percentage
+        for each column.
 
     Raises:
-        TypeError: If input is not a pandas DataFrame.
+        TypeError: If input is not a pandas DataFrame or Series.
         ValueError: If input DataFrame has no columns.
     """
 
-    # Validate inputs
-    if not isinstance(df, pd.DataFrame):
-        raise TypeError('Input must be a pandas DataFrame')
+    data = data.fillna(cp.nan)
 
-    if df.shape[1] == 0:
-        raise ValueError('Input DataFrame has no columns')
+    if not isinstance(data, (pd.DataFrame, pd.Series)) or data.empty:
+        raise ValueError(
+            'Input must be a non-empty pandas DataFrame or a non-empty pandas Series')
 
     # Calculate missing values
-    missing_count = df.isnull().sum().sort_values(ascending=False)
-    percentage_missing = (missing_count / df.shape[0]) * 100
+    if isinstance(data, pd.Series):
+        missing_count = data.isnull().sum()
+        percentage_missing = (missing_count / data.shape[0]) * 100
+        report = pd.DataFrame(
+            {'Missing count': [missing_count], 'Percentage': [percentage_missing]})
+    else:
+        missing_count = data.isnull().sum().sort_values(ascending=False)
+        percentage_missing = (missing_count / data.shape[0]) * 100
+        report = pd.DataFrame(
+            {'Missing count': missing_count, 'Percentage': percentage_missing})
 
-    report = pd.concat([missing_count, percentage_missing],
-                       axis=1, keys=['Missing count', 'Percentage'])
     return report
 
 
-def compute_mad_1d(x):
+def haversine_distance(lat1, lon1, lat2, lon2):
+    """
+    Calculate the Haversine distance between two sets of latitude and longitude.
+
+    Args:
+        lat1 (float): Latitude of the first point in degrees.
+        lon1 (float): Longitude of the first point in degrees.
+        lat2 (float): Latitude of the second point in degrees.
+        lon2 (float): Longitude of the second point in degrees.
+
+    Returns:
+        float: The distance between the two points in kilometers.
+    """
+    # Radius of the Earth
+    R = 6371
+
+    # convert to radian
+    lat1 = cp.deg2rad(lat1)
+    lon1 = cp.deg2rad(lon1)
+    lat2 = cp.deg2rad(lat2)
+    lon2 = cp.deg2rad(lon2)
+
+    # Haversine formula
+    dlon = lon2 - lon1
+    dlat = lat2 - lat1
+    a = cp.sin(dlat / 2)**2 + cp.cos(lat1) * cp.cos(lat2) * cp.sin(dlon / 2)**2
+    d = 2 * cp.arcsin(cp.sqrt(a)) * R
+    return d
+
+
+def compute_mad_1d(x, k=[2.5,2.5]):
     """
     References:
         https://doi.org/10.1016/j.jesp.2013.03.013
@@ -55,10 +89,10 @@ def compute_mad_1d(x):
         raise ValueError("Input contains NaN.")
 
     med = cp.median(x)
-    mad = cp.median(cp.abs(x - med))
-    # constant b using Ley (2023)
-    # b = 1. / cp.quantile(x, 0.75)
-    return mad * 1.486
+    mad = 1.486 * cp.median(cp.abs(x - med))
+    lower = med - k[0] * mad
+    upper = med + k[1] * mad
+    return lower, upper
 
 
 def sql2csv(sqlfile):
@@ -107,34 +141,4 @@ def sql2csv(sqlfile):
 
     except FileNotFoundError:
         print(f"The file {sqlfile} does not exist.")
-
-
-def haversine_distance(lat1, lon1, lat2, lon2):
-    """
-    Calculate the Haversine distance between two sets of latitude and longitude.
-
-    Args:
-        lat1 (float): Latitude of the first point in degrees.
-        lon1 (float): Longitude of the first point in degrees.
-        lat2 (float): Latitude of the second point in degrees.
-        lon2 (float): Longitude of the second point in degrees.
-
-    Returns:
-        float: The distance between the two points in kilometers.
-    """
-    # Radius of the Earth
-    R = 6371
-
-    # convert to radian
-    lat1 = cp.deg2rad(lat1)
-    lon1 = cp.deg2rad(lon1)
-    lat2 = cp.deg2rad(lat2)
-    lon2 = cp.deg2rad(lon2)
-
-    # Haversine formula
-    dlon = lon2 - lon1
-    dlat = lat2 - lat1
-    a = cp.sin(dlat / 2)**2 + cp.cos(lat1) * cp.cos(lat2) * cp.sin(dlon / 2)**2
-    d = 2 * cp.arcsin(cp.sqrt(a)) * R
-    return d
 
