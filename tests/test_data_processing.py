@@ -1,3 +1,4 @@
+from os import name
 import sys
 import pandas as pd
 import pytest
@@ -27,27 +28,32 @@ class TestCountMissingValues:
         """
         Test calculates missing values in a Series.
         """
-        series_with_missing_values = pd.Series([1, None, 3, None, 5])
-        result = count_missing_values(series_with_missing_values)
-        assert result.equals(pd.DataFrame(
-            {'Missing count': [2], 'Percentage': [40.0]}))
+        series_missing_values = pd.Series([1, None, 3, None, 5], name='A')
+        # import pdb;pdb.set_trace()
+        result = count_missing_values(series_missing_values)
+
+        expected_result = pd.DataFrame({'Missing count': [2],
+                                        'Percentage': [40.0]},
+                                       index=['A'])
+        pd.testing.assert_frame_equal(result, expected_result)
 
     def test_missing_values_in_dataframe(self):
         """
         Test calculates missing values in a DataFrame.
         """
-        df_with_missing_values = pd.DataFrame({
-            'A': [1, None, 3, None, 5],
-            'B': [1, 2, 3, None, 5],
-            'C': [None, None, 3, None, 5]
-        })
+        df_missing_values = pd.DataFrame({
+            'A': [1, 2, None, 4, 5],
+            'B': [None, 2, 3, 4, 5],
+            'C': [1, 2, 3, None, None],
+            })
+        result = count_missing_values(df_missing_values)
         expected_result = pd.DataFrame({
-            'Missing count': [1, 3, 2],
-            'Percentage': [20.0, 60.0, 40.0]
-        }, index=['B', 'C', 'A']).sort_values(by='Missing count', ascending=False)
-        result = count_missing_values(df_with_missing_values)
-        pd.testing.assert_frame_equal(result.sort_values(
-            by='Missing count', ascending=False), expected_result)
+            'Missing count': [1, 1, 2],
+            'Percentage': [20.0, 20.0, 40.0]
+        }, index=['A', 'B', 'C'])
+        expected_result = expected_result.sort_values(by='Percentage',
+                                                      ascending=False)
+        pd.testing.assert_frame_equal(result, expected_result)
 
 
 class TestHaversineDistance:
