@@ -4,6 +4,9 @@ from src.data.data_processing import count_missing_values
 
 
 class TestRentalData:
+    """
+    Check the cleaned data after processing.
+    """
     @classmethod
     def setup_class(cls):
         cls.clean_data = pd.read_csv('data/processed/rental_processed.csv')
