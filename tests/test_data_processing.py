@@ -1,10 +1,6 @@
-from os import name
-import sys
 import pandas as pd
 import pytest
-
-sys.path.insert(0, "./src")
-from data.data_processing import count_missing_values, haversine_distance
+from src.data.data_processing import count_missing_values, haversine_distance
 
 
 class TestCountMissingValues:
