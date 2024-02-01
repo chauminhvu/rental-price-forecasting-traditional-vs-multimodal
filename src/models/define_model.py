@@ -1,23 +1,22 @@
 import pandas as pd
-import argparse
+import numpy as np
+import pickle
+import warnings
 from numpy import float32
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 import lightning as L
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import RobustScaler
-from xgboost import XGBRegressor
-from src.data.data_processing import label_encoding
+from sklearn.preprocessing import OneHotEncoder, RobustScaler, MinMaxScaler
+from src.data.data_processing import group_minor_categories
 torch.set_float32_matmul_precision('high')
+warnings.filterwarnings("ignore")
 
 if torch.cuda.is_available():
     device = torch.device("cuda")
-    # torch.set_default_dtype(torch.float32)
 else:
     device = torch.device("cpu")
-    # torch.set_default_dtype(torch.float32)
-
 
 
 def load_data(file_path, verbose=False):
@@ -30,43 +29,66 @@ def load_data(file_path, verbose=False):
     Returns:
         pandas.DataFrame: training data
     """
+
     clean_data_df = pd.read_csv(file_path)
-
-    # Convert object-type columns to category
-    object_cols = clean_data_df.select_dtypes(include=["object"]).columns
-    for col in object_cols:
-        clean_data_df[col] = clean_data_df[col].astype("category")
-
     prediction_df = clean_data_df.drop(["baseRent", "picturecount"], axis=1)
 
+    # Convert object-type columns to category
+    cat_cols = prediction_df.select_dtypes(include=["object"]).columns
+    for col in cat_cols:
+        # convert to category type
+        prediction_df[col] = prediction_df[col].astype("category")
+
+    # Group minior category items cumsum < 20% into "Other"
+    prediction_df = group_minor_categories(prediction_df, cat_cols, threshold=0.2)
+
+    # Encode categorical columns
+    encoder = OneHotEncoder(sparse=False)
+    categorical_cols_encoded = encoder.fit_transform(prediction_df[cat_cols])
+    # Concatenate the encoded categorical columns with the original DataFrame
+    encoded_df = pd.DataFrame(categorical_cols_encoded,
+                              columns=encoder.get_feature_names_out(cat_cols))
+    final_df = pd.concat([prediction_df.drop(cat_cols, axis=1), encoded_df], axis=1)
     # print data info
     if verbose:
-        print(prediction_df.info())
-        print(prediction_df.head(5))
+        print(final_df.info())
+        print(final_df.head(5))
+    return final_df
 
-    return prediction_df
 
+def load_mlp_params(file_path, input_size, output_size):
+    # Load best MLPRegressor parameters from file
+    with open(file_path, "rb") as f:
+        best_mlp_params = pickle.load(f)
 
-# def train_xgboost(X_train, y_train):
-#     xgb_model = XGBRegressor(tree_method='gpu_hist')  # Use GPU for training XGBoost
-#     xgb_model.fit(X_train, y_train)
-#     return xgb_model
+    # Extract the sizes of hidden layers
+    hidden_layer_sizes = [best_mlp_params[f'n_l{i}'] for i in range(
+        best_mlp_params['hidden_layers'])]
+
+    mlp_params = {
+        'learning_rate': 1e-3,
+        'layer_sizes': [input_size] + hidden_layer_sizes + [output_size],
+        'hidden_activation': best_mlp_params['activation'],
+        'loss_func': nn.HuberLoss(),
+        'dropout': best_mlp_params['droptout'],
+    }
+    return mlp_params
 
 
 class RentalDataModule(L.LightningDataModule):
-    def __init__(self, data_dir, batch_size=2048, split_ratio=0.1, num_workers=8):
+    def __init__(self, data_dir, fraction=1., batch_size=2048, split_ratio=0.1, num_workers=8):
         super().__init__()
         self.data_dir = data_dir
+        self.fraction = fraction
         self.batch_size = batch_size
         self.split_ratio = split_ratio
         self.num_workers = num_workers
 
     def prepare_data(self):
         self.data = load_data(self.data_dir, verbose=False)
-        # Encode categorical columns
-        categorical_cols = self.data.select_dtypes(include=["category"]).columns
-        self.encoders = label_encoding(self.data, categorical_cols)
+        self.data = self.data.sample(frac=self.fraction, random_state=2024)
         # get in/output
+        print(self.data.drop('totalRent', axis=1).columns)
         outputs = self.data['totalRent'].values.astype(float32).reshape(-1, 1)
         inputs = self.data.drop('totalRent', axis=1).values.astype(float32)
         # slit data
@@ -79,6 +101,9 @@ class RentalDataModule(L.LightningDataModule):
         # fit scaler to data 
         self.x_scaler = RobustScaler().fit(self.X_train)
         self.y_scaler = RobustScaler().fit(self.y_train)
+        # self.x_scaler = MinMaxScaler((0.1, 1)).fit(self.X_train)
+        # self.y_scaler = MinMaxScaler((0.1, 1)).fit(self.y_train)
+        
 
     def setup(self, stage: str):
 
@@ -154,7 +179,7 @@ class MLPModel(L.LightningModule):
     def __init__(self, layer_sizes, hidden_activation, dropout=0.1):
         super().__init__()
         self.layers = nn.ModuleList()
-        
+  
         # Core hidden layers
         for k in range(len(layer_sizes)-2):
             self.layers.append(nn.Linear(layer_sizes[k], layer_sizes[k+1], bias=True))
@@ -171,12 +196,12 @@ class MLPModel(L.LightningModule):
 
 
 class MLPRegressor(L.LightningModule):
-    def __init__(self, layer_sizes, hidden_activation, dropout, loss_func, lr):
+    def __init__(self, layer_sizes, hidden_activation, dropout, loss_func, learning_rate):
         super().__init__()
-        self.save_hyperparameters(ignore=['loss_func'])
+        self.save_hyperparameters(ignore=['loss_func', 'hidden_activation'])
         self.layer_sizes = layer_sizes
-        self.hidden_activation = hidden_activation
-        self.lr = lr
+        self.hidden_activation = eval(f"{hidden_activation}")
+        self.lr = learning_rate
         self.model = MLPModel(self.layer_sizes, self.hidden_activation, dropout)
         self.loss_func = loss_func
 
@@ -230,3 +255,22 @@ class MLPRegressor(L.LightningModule):
     #     self.validation_epoch_avg.append(epoch_average)
     #     self.log("validation_epoch_average", epoch_average)
     #     self.validation_step_outputs.clear()
+
+
+class RMSLELoss(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.mse = nn.MSELoss()
+        
+    def forward(self, pred, label):
+        return torch.sqrt(self.mse(torch.log(pred + 1), torch.log(label + 1)))
+
+
+class LogCoshLoss(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, y_pred, y_true):
+        diff = y_true - y_pred
+        return torch.mean(torch.log(torch.cosh(diff + 1e-12)))
+

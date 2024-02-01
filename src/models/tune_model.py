@@ -1,82 +1,118 @@
-import optuna
+import warnings
+warnings.filterwarnings("ignore")
 import numpy as np
-import torch
-from torch.utils.data import DataLoader, TensorDataset
-import pytorch_lightning as pl
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
+import torch.nn as nn
+import optuna
+import pickle
+import lightning as L
+from define_model import RentalDataModule, MLPRegressor
 from xgboost import XGBRegressor
-from sklearn.metrics import mean_squared_error
-from define_model import MLPModel
+from sklearn.metrics import r2_score
 
 
-def train_xgboost(X_train, y_train, params):
-    xgb_model = XGBRegressor(**params)
-    xgb_model.fit(X_train, y_train)
-    return xgb_model
+EPOCHS = 20
+PATH_DATASETS = "data/processed/rental_processed.csv"
+BATCHSIZE = 4096
+NTRIALS = 100
 
-def objective(trial):
-    # Define search space for hyperparameters
-    mlp_params = {
-        "input_dim": X_train.shape[1],
-        "hidden_size": trial.suggest_int("hidden_size", 32, 256),
-        "learning_rate": trial.suggest_loguniform("learning_rate", 1e-5, 1e-2),
-    }
 
-    xgb_params = {
-        "max_depth": trial.suggest_int("max_depth", 3, 10),
-        "learning_rate": trial.suggest_loguniform("learning_rate", 1e-3, 0.1),
-        "n_estimators": trial.suggest_int("n_estimators", 100, 1000),
-    }
+def mlp_objective(trial):
+    datamodule = RentalDataModule(data_dir=PATH_DATASETS, batch_size=BATCHSIZE,
+                                  fraction=0.2, split_ratio=0.2, num_workers=16)
+    datamodule.prepare_data()
+    datamodule.setup("fit")
+    datamodule.setup("validate")
+    datamodule.setup("test")
 
-    # Train MLP model
-    model = MLPModel(**mlp_params)
-    trainer = pl.Trainer(gpus=1, max_epochs=10)
-    trainer.fit(model, DataLoader(TensorDataset(torch.tensor(X_train_scaled, dtype=torch.float32), 
-                                                torch.tensor(y_train, dtype=torch.float32))))
+    # Suggest activations funtions in ANN's core
+    activation = trial.suggest_categorical('activation', ['nn.SELU()', 'nn.SiLU()', 'nn.ReLU()'])
+    # Suggest number of layers
+    hidden_layers = trial.suggest_int("hidden_layers", 2, 4)
+    # Suggest dropout
+    dropout = trial.suggest_discrete_uniform('droptout', 0.0, 0.5, 0.1)
+    # Number of hidden neurons in each layer
+    output_neurons = [trial.suggest_int(f"n_l{i}", 30, 240, step=10) for i in range(hidden_layers)]
+    # Book keeping parameters
+    mlp_params = dict(learning_rate=1e-2,
+                      layer_sizes=[30] + output_neurons + [1],
+                      hidden_activation=activation,
+                      loss_func=nn.HuberLoss(),
+                      dropout=dropout,
+                      )
 
-    # Train XGBoost model
-    xgb_model = train_xgboost(X_train, y_train, xgb_params)
+    mlp_model = MLPRegressor(**mlp_params)
+    # Initialize PyTorch Lightning trainer
+    trainer = L.Trainer(accelerator='auto',
+                        max_epochs=EPOCHS,
+                        gradient_clip_val=4.,
+                        enable_checkpointing=False,
+                        )
 
-    # Evaluate XGBoost model
-    y_pred_xgb = xgb_model.predict(X_test)
-    mse_xgb = mean_squared_error(y_test, y_pred_xgb)
+    # Train the model
+    trainer.fit(mlp_model, datamodule)
+    mlp_model.eval()
+    x, y = datamodule.test_dataset[:]
+    y_hat_test = mlp_model(x).detach().cpu().numpy()
+    # Check for NaN values in predictions
+    if np.isnan(y_hat_test).any():
+        # Handle NaN values gracefully
+        return float('-inf')  # Return negative infinity as a special value
+        
+    r2_test = r2_score(y_hat_test, y.detach().cpu().numpy())
+    return r2_test
 
-    # Evaluate MLP model
-    model.eval()
-    with torch.no_grad():
-        y_pred_mlp = model(torch.tensor(X_test_scaled, dtype=torch.float32)).cpu().numpy()
-    mse_mlp = mean_squared_error(y_test, y_pred_mlp)
 
-    return (mse_xgb + mse_mlp) / 2  # Return average MSE
+def xgb_objective(trial):
+    datamodule = RentalDataModule(data_dir=PATH_DATASETS, batch_size=BATCHSIZE,
+                                  fraction=0.2, split_ratio=0.2, num_workers=16)
+    datamodule.prepare_data()
+    datamodule.setup("fit")
+    datamodule.setup("validate")
+    datamodule.setup("test")
+
+    # Suggest for XGboost
+    max_depth = trial.suggest_int('max_depth', 3, 20)
+    n_estimators =trial.suggest_int('n_estimators', 50, 1000, 50)
+    learning_rate = trial.suggest_loguniform('learning_rate', 1e-3, 1e-1)
+    xgb_params = dict(
+        device='gpu',
+        tree_method='gpu_hist',
+        learning_rate=learning_rate,
+        max_depth=max_depth,
+        n_estimators=n_estimators,
+        eval_set=[(datamodule.X_val_scaled, datamodule.y_val_scaled)],
+        eval_metric="mphe",
+    )
+
+    xgb_model = XGBRegressor(**xgb_params)
+    xgb_model.fit(datamodule.X_train_scaled, datamodule.y_train_scaled,)
+    xgb_pred_test = xgb_model.predict(datamodule.X_test_scaled)
+    xgb_r2_test = r2_score(xgb_pred_test, datamodule.y_test_scaled)
+    return xgb_r2_test
+
 
 def main():
-    # Load data and split into features and target
-    # Assuming you have data loaded into X and y
-    clean_data = gd.read_csv('data/processed/rental_processed.csv')
-    print(clean_data.info)
-    print(clean_data.columns)
-    exit()
-    # Split data into train and test sets
-    global X_train, X_test, y_train, y_test, X_train_scaled, X_test_scaled
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    # # Optimize MLPRegressor hyperparameters
+    # mlp_study = optuna.create_study(direction='maximize')
+    # mlp_study.optimize(mlp_objective, n_trials=NTRIALS)
 
-    # Standardize features for MLP model
-    scaler = StandardScaler()
-    X_train_scaled = scaler.fit_transform(X_train)
-    X_test_scaled = scaler.transform(X_test)
+    # print("Best MLPRegressor parameters:", mlp_study.best_params)
+    # print("Best MLPRegressor R2 score:", mlp_study.best_value)
+    # # Save best MLPRegressor parameters to a file using pickle
+    # with open("models/best_mlp_params.pkl", "wb") as f:
+    #     pickle.dump(mlp_study.best_params, f)
+    
+    # Optimize XGBRegressor hyperparameters
+    xgb_study = optuna.create_study(direction='maximize')
+    xgb_study.optimize(xgb_objective, n_trials=NTRIALS)
+    
+    # Save best XGBRegressor parameters to a file using pickle
+    with open("models/best_xgb_params.pkl", "wb") as f:
+        pickle.dump(xgb_study.best_params, f)
 
-    # Optimize hyperparameters
-    study = optuna.create_study(direction="minimize")
-    study.optimize(objective, n_trials=100)
+    print("Best XGBRegressor parameters:", xgb_study.best_params)
+    print("Best XGBRegressor R2 score:", xgb_study.best_value)
 
-    # Print best parameters
-    print("Best trial:")
-    trial = study.best_trial
-    print("  Value: {}".format(trial.value))
-    print("  Params: ")
-    for key, value in trial.params.items():
-        print("    {}: {}".format(key, value))
 
 if __name__ == "__main__":
     main()
