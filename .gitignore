@@ -1,6 +1,8 @@
 # .gitignore for Python, PyTorch, PostgreSQL, PyTorch Lightning, and MLflow projects
+AutogluonModels/
 .vscode/
 data/
+notebooks/*.log
 *.log
 # Byte-compiled / optimized / DLL files
 __pycache__/
