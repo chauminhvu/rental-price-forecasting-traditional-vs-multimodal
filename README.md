@@ -76,6 +76,7 @@ Stekhoven, D. J., & Bühlmann, P. (2012). MissForest—Non-parametric missing va
 - Performance: $R^2 (MLP)= 0.8$; $R^2 (XGB)= 0.9$
 
 ## Part 2: Predicting Rent with Structural and Text Data
+- Please checkout branch `multimodal-model`
 - Download folder `multi_models` and place it in the main folder `apartment-rent-regression`. It is about 500 MB, therefore, I have problems with git.
 - The download link: https://drive.google.com/drive/folders/1r6HNT2szh_ImIUsA2d3uMljEuyZAA9Cj?usp=sharing
 - Trained models are saved in `src/multimodal`
