@@ -1,3 +1,4 @@
+import argparse
 from autogluon.multimodal import MultiModalPredictor
 import cudf as gd
 from src.data.data_processing import group_minor_categories
@@ -11,10 +12,24 @@ def root_mean_squared_error(y_pred, y_true):
     mse = mean_squared_error(y_pred, y_true)
     return np.sqrt(mse)
 
-TRAINING = False
-TRAINING_TIME = 60*60  # seconds
+
+parser = argparse.ArgumentParser(description='Train multi-modal pregressor')
+parser.add_argument('-n', '--new', type=bool, default=False,
+                    help='new training')
+parser.add_argument('-t', '--time', type=int, default=3,
+                    help='Training time [minutes]')
+parser.add_argument('-r', '--resume', type=bool, default=False,
+                    help='Resume training, provide existed model path')
+parser.add_argument('-p', '--path', type=str, default="multi_models/1800",
+                    help='Model path if resume training')
+
+args = parser.parse_args()
+TRAINING = args.train
+RESUME = args.resume
+TRAINING_TIME = int(args.time*60)  # seconds
 PATH_DATASETS = "data/processed/rental_text_processed.csv"
 MODEL_PATH = "multi_models"
+MODEL_PATH_RES = f"multi_models/{args.path}"
 
 mix_text_df = gd.read_csv(PATH_DATASETS)
 mix_text_df = mix_text_df.drop(["baseRent", "picturecount"], axis=1)
@@ -36,15 +51,19 @@ train_df = small_sample_df.sample(frac=0.8, random_state=2024)
 test_df = small_sample_df.drop(train_df.index)
 
 print(f"Numer of training sample: {train_df.shape[0]}")
+fit_params = {"optimization.gradient_clip_val": 5,
+                "optimization.lr_mult": 2}
 
-if TRAINING:
-    time_limit = 1 * 60  # 3 minutes
-    multimodal = MultiModalPredictor(label='totalRent', path=MODEL_PATH)
-    fit_params={"optimization.gradient_clip_val": 5,
-            "optimization.lr_mult": 2}
+if RESUME:
+    time_limit = TRAINING_TIME
+    multimodal = MultiModalPredictor.load(f"{MODEL_PATH_RES}")
+    multimodal.fit(train_df, time_limit=time_limit, hyperparameters=fit_params)
+elif TRAINING:
+    time_limit = TRAINING_TIME
+    multimodal = MultiModalPredictor(label='totalRent', path=f"{MODEL_PATH}/{TRAINING_TIME}")
     multimodal.fit(train_df, time_limit=time_limit, hyperparameters=fit_params)
 else:
-    multimodal = MultiModalPredictor.load(f"{MODEL_PATH}")
+    multimodal = MultiModalPredictor.load(f"{MODEL_PATH}/{TRAINING_TIME}")
 
 
 # Get predictions
@@ -59,14 +78,3 @@ r2_multi = r2_score(y_pred_test, y_test)
 rmse_multi = root_mean_squared_error(y_pred_test, y_test)
 print(f"R2: {r2_multi}")
 print(f"RMSE: {rmse_multi}")
-xlabel = r"Living space $[m^2]$"
-ylabel = "total rent [euros/month]"
-title = r"Performence of MLP vs XGboost on $1\%$ data"
-
-print('Predictions:')
-print('------------')
-print(y_pred_test[:5])
-print()
-print('True Value:')
-print('------------')
-print(y_test[:5])
