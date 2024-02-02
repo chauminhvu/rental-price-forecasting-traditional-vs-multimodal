@@ -33,10 +33,21 @@ Install the dependencies:
 pip install -r requirements.txt # for CPU
 pip install -r requirements-cuda.txt # for GPU
 ```
+Data:
+- Download the dataset from [dataset](https://www.kaggle.com/corrieaar/apartment-rental-offers-in-germany) and place it in the `data/raw` folder.
+- Download the latitutes and longitudes reference for German zipcodes from [zipcodes](https://gist.github.com/iteufel/af379872bbc3bf5261e2fd09b681ff7e) and place it in the `data/raw` folder
 
-Download the dataset from [here](https://www.kaggle.com/corrieaar/apartment-rental-offers-in-germany) and place it in the `data` folder.
-
-
+Machine learning model inference on part 1 (structuaral data):
+```bash
+source venv/bin/activate
+python3 src/model/evaluate_model.py
+```
+Machine learning model inference on part 2 (combine structural + textual data):
+```bash
+git switch multimodal-model
+source ve_multi/bin/activate
+python3 src/multi_modal/multimodal_model.py
+```
 ## Part 1: Predicting Rent with Structural Data
 
 In this part, only the structural features of the rental properties, such as service charge, living area size, number of rooms, location, etc., to predict the rent.
