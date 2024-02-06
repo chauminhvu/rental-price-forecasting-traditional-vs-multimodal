@@ -1,7 +1,7 @@
 # Apartment Rental Prediction
 
 This project aims to develop machine learning models for predicting rental property prices using both structural and text data. The dataset used for this project contains rental property listings from a German real estate platform, encompassing various features such as living area size, rent, location, and more.
-
+Dataset link: https://www.kaggle.com/datasets/corrieaar/apartment-rental-offers-in-germany
 ## Repository Structure
 
 The repository is organized as follows:
