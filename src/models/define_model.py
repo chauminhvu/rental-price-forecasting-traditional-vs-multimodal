@@ -8,9 +8,9 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 import lightning as L
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import OneHotEncoder, RobustScaler, MinMaxScaler
+from sklearn.preprocessing import OneHotEncoder, RobustScaler
 from src.data.data_processing import group_minor_categories
-torch.set_float32_matmul_precision('high')
+torch.set_float32_matmul_precision('medium')
 warnings.filterwarnings("ignore")
 
 if torch.cuda.is_available():
@@ -32,7 +32,10 @@ def load_data(file_path, verbose=False):
 
     clean_data_df = pd.read_csv(file_path)
     prediction_df = clean_data_df.drop(["baseRent", "picturecount"], axis=1)
-
+    # conver to log-scale
+    log_cols = ['serviceCharge', 'livingSpace', 'totalRent']
+    for log in log_cols:
+        prediction_df.loc[:, log] = np.log1p(prediction_df[log])
     # Convert object-type columns to category
     cat_cols = prediction_df.select_dtypes(include=["object"]).columns
     for col in cat_cols:
@@ -103,7 +106,6 @@ class RentalDataModule(L.LightningDataModule):
         self.y_scaler = RobustScaler().fit(self.y_train)
         # self.x_scaler = MinMaxScaler((0.1, 1)).fit(self.X_train)
         # self.y_scaler = MinMaxScaler((0.1, 1)).fit(self.y_train)
-        
 
     def setup(self, stage: str):
 
@@ -195,6 +197,30 @@ class MLPModel(L.LightningModule):
         return x
 
 
+
+class MLPModel(L.LightningModule):
+    def __init__(self, layer_sizes, hidden_activation, dropout=0.1):
+        super().__init__()
+        self.layers = nn.ModuleList()
+
+        # Input layer
+        self.layers.append(nn.Linear(layer_sizes[-2], layer_sizes[-1], bias=True))
+        # Core hidden layers
+        for k in range(len(layer_sizes)-2):
+            self.layers.append(nn.Linear(layer_sizes[k], layer_sizes[k+1], bias=True))
+            self.layers.append(nn.Dropout(dropout))
+            self.layers.append(hidden_activation)
+        # Final layer
+        self.layers.append(nn.Linear(layer_sizes[-2], layer_sizes[-1], bias=True))
+
+    def forward(self, x):
+        # x = x.float()
+        for layer in self.layers:
+            x = layer(x)
+        return x
+
+
+
 class MLPRegressor(L.LightningModule):
     def __init__(self, layer_sizes, hidden_activation, dropout, loss_func, learning_rate):
         super().__init__()
@@ -215,16 +241,13 @@ class MLPRegressor(L.LightningModule):
         return self.model(x)
 
     def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.model.parameters(), self.lr)
+        optimizer = torch.optim.Adam(self.model.parameters(), self.lr, weight_decay=1e-8)
         return optimizer
 
     def training_step(self, batch, batch_idx):
-        # Get batch data
         x_batch, y_batch = batch
         predict = self.model(x_batch)
         loss = self.loss_func(predict, y_batch)
-        # Store
-        # self.training_step_outputs.append(loss)
         self.log("loss", loss)
         return loss
 
@@ -232,29 +255,13 @@ class MLPRegressor(L.LightningModule):
         x_batch, y_batch = batch
         predict = self.model(x_batch)
         loss = self.loss_func(predict, y_batch)
-        # Store
-        # self.validation_step_outputs.append(stored_loss)
         self.log("val_loss", loss, on_step=False, on_epoch=True, prog_bar=True)
 
     def test_step(self, batch, batch_idx):
         x_batch, y_batch = batch
         predict = self.model(x_batch)
         loss = self.loss_func(predict, y_batch)
-        # Store
-        # self.validation_step_outputs.append(stored_loss)
         self.log("test_loss", loss)
-
-    # def on_train_epoch_end(self):
-    #     epoch_average = torch.stack(self.training_step_outputs).mean()
-    #     self.training_epoch_avg.append(epoch_average)
-    #     self.log("training_epoch_average", epoch_average)
-    #     self.training_step_outputs.clear()
-
-    # def on_validation_epoch_end(self):
-    #     epoch_average = torch.stack(self.validation_step_outputs).mean()
-    #     self.validation_epoch_avg.append(epoch_average)
-    #     self.log("validation_epoch_average", epoch_average)
-    #     self.validation_step_outputs.clear()
 
 
 class RMSLELoss(nn.Module):
@@ -274,3 +281,21 @@ class LogCoshLoss(nn.Module):
         diff = y_true - y_pred
         return torch.mean(torch.log(torch.cosh(diff + 1e-12)))
 
+
+class Swish(nn.Module):
+
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x):
+        return x * torch.sigmoid(x)
+
+
+class LearnedSnake(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.a = nn.Parameter(torch.randn(1))
+        self.a.requires_grad_(True)
+
+    def forward(self, x):
+        return x + torch.square(torch.sin(self.a * x))/self.a

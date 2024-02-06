@@ -5,9 +5,9 @@ import torch.nn as nn
 import optuna
 import pickle
 import lightning as L
-from define_model import RentalDataModule, MLPRegressor
+from define_model import RentalDataModule, MLPRegressor, Swish, LearnedSnake
 from xgboost import XGBRegressor
-from sklearn.metrics import r2_score
+from sklearn.metrics import mean_squared_error
 
 
 EPOCHS = 20
@@ -25,15 +25,15 @@ def mlp_objective(trial):
     datamodule.setup("test")
 
     # Suggest activations funtions in ANN's core
-    activation = trial.suggest_categorical('activation', ['nn.SELU()', 'nn.SiLU()', 'nn.ReLU()'])
+    activation = trial.suggest_categorical('activation', ['nn.SELU()', 'nn.SiLU()', 'Swish()', 'LearnedSnake()'])
     # Suggest number of layers
     hidden_layers = trial.suggest_int("hidden_layers", 2, 4)
     # Suggest dropout
-    dropout = trial.suggest_discrete_uniform('droptout', 0.0, 0.5, 0.1)
+    dropout = trial.suggest_discrete_uniform('droptout', 0.0, 0.3, 0.1)
     # Number of hidden neurons in each layer
     output_neurons = [trial.suggest_int(f"n_l{i}", 30, 240, step=10) for i in range(hidden_layers)]
     # Book keeping parameters
-    mlp_params = dict(learning_rate=1e-2,
+    mlp_params = dict(learning_rate=1e-3,
                       layer_sizes=[30] + output_neurons + [1],
                       hidden_activation=activation,
                       loss_func=nn.HuberLoss(),
@@ -44,7 +44,8 @@ def mlp_objective(trial):
     # Initialize PyTorch Lightning trainer
     trainer = L.Trainer(accelerator='auto',
                         max_epochs=EPOCHS,
-                        gradient_clip_val=4.,
+                        gradient_clip_algorithm='norm',
+                        gradient_clip_val=0.5,
                         enable_checkpointing=False,
                         )
 
@@ -57,8 +58,8 @@ def mlp_objective(trial):
     if np.isnan(y_hat_test).any():
         # Handle NaN values gracefully
         return float('-inf')  # Return negative infinity as a special value
-        
-    r2_test = r2_score(y_hat_test, y.detach().cpu().numpy())
+
+    r2_test = np.sqrt(mean_squared_error(y_hat_test, y.detach().cpu().numpy()))
     return r2_test
 
 
@@ -92,26 +93,33 @@ def xgb_objective(trial):
 
 
 def main():
-    # # Optimize MLPRegressor hyperparameters
-    # mlp_study = optuna.create_study(direction='maximize')
-    # mlp_study.optimize(mlp_objective, n_trials=NTRIALS)
+    # Optimize MLPRegressor hyperparameters
+    # Chose sampler
+    sampler = getattr(optuna.samplers, "TPESampler")(seed=0)
+    # Chose pruner
+    pruner = optuna.pruners.MedianPruner(n_startup_trials=5, n_warmup_steps=2)
+    mlp_study = optuna.create_study(direction='minimize',
+                                    sampler=sampler,
+                                    pruner=pruner
+                                    )
+    mlp_study.optimize(mlp_objective, n_trials=NTRIALS)
 
-    # print("Best MLPRegressor parameters:", mlp_study.best_params)
-    # print("Best MLPRegressor R2 score:", mlp_study.best_value)
-    # # Save best MLPRegressor parameters to a file using pickle
-    # with open("models/best_mlp_params.pkl", "wb") as f:
-    #     pickle.dump(mlp_study.best_params, f)
-    
-    # Optimize XGBRegressor hyperparameters
-    xgb_study = optuna.create_study(direction='maximize')
-    xgb_study.optimize(xgb_objective, n_trials=NTRIALS)
-    
-    # Save best XGBRegressor parameters to a file using pickle
-    with open("models/best_xgb_params.pkl", "wb") as f:
-        pickle.dump(xgb_study.best_params, f)
+    print("Best MLPRegressor parameters:", mlp_study.best_params)
+    print("Best MLPRegressor RMSE score:", mlp_study.best_value)
+    # Save best MLPRegressor parameters to a file using pickle
+    with open("models/best_mlp_params.pkl", "wb") as f:
+        pickle.dump(mlp_study.best_params, f)
 
-    print("Best XGBRegressor parameters:", xgb_study.best_params)
-    print("Best XGBRegressor R2 score:", xgb_study.best_value)
+    # # Optimize XGBRegressor hyperparameters
+    # xgb_study = optuna.create_study(direction='maximize')
+    # xgb_study.optimize(xgb_objective, n_trials=NTRIALS)
+
+    # # Save best XGBRegressor parameters to a file using pickle
+    # with open("models/best_xgb_params.pkl", "wb") as f:
+    #     pickle.dump(xgb_study.best_params, f)
+
+    # print("Best XGBRegressor parameters:", xgb_study.best_params)
+    # print("Best XGBRegressor R2 score:", xgb_study.best_value)
 
 
 if __name__ == "__main__":

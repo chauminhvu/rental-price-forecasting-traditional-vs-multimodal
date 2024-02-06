@@ -3,7 +3,7 @@ import pickle
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from sklearn.metrics import r2_score
+from sklearn.metrics import r2_score, mean_squared_error
 # from xgboost import XGBRegressor
 from define_model import RentalDataModule, MLPRegressor, load_mlp_params
 from src.data.data_processing import plot_predictions
@@ -22,7 +22,7 @@ mlp_params = load_mlp_params(f"{MODEL_PATH}/best_mlp_params.pkl",
                              )
 # Load MLPRegressor model
 mlp_model = MLPRegressor(**mlp_params)
-mlp_model.load_state_dict(torch.load(f"{MODEL_PATH}/mlp_model_80.ckpt"))
+mlp_model.load_state_dict(torch.load(f"{MODEL_PATH}/mlp_model_83.ckpt"))
 
 # Inference for MLPRegressor
 mlp_model.eval()
@@ -44,8 +44,13 @@ xgb_pred_test_unscaled = datamodule.y_scaler.inverse_transform(xgb_pred_test.res
 # Calculate R2 scores
 r2_mlp = r2_score(mlp_pred_unscaled_test, datamodule.y_test)
 r2_xgb = r2_score(xgb_pred_test_unscaled, datamodule.y_test)
-print(f"R2 MLP: {r2_mlp}")
-print(f"R2 XGBoost: {r2_xgb}")
+
+mlp_rmse_test = np.sqrt(mean_squared_error(mlp_pred_unscaled_test, datamodule.y_test))
+xgb_rmse_test = np.sqrt(mean_squared_error(xgb_pred_test_unscaled, datamodule.y_test))
+print(f"R2 MLP      : {r2_mlp}")
+print(f"RMSE MLP    : {mlp_rmse_test}")
+print(f"R2 XGBoost  : {r2_xgb}")
+print(f"RMSE XGBoost: {xgb_rmse_test}")
 xlabel = r"Living space $[m^2]$"
 ylabel = "total rent [euros/month]"
 title = r"Performence of MLP vs XGboost on $1\%$ data"
