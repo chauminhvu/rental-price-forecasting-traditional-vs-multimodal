@@ -2,6 +2,15 @@
 
 This project aims to develop machine learning models for predicting rental property prices using both structural and text data. The dataset used for this project contains rental property listings from a German real estate platform, encompassing various features such as living area size, rent, location, and more.
 Dataset link: https://www.kaggle.com/datasets/corrieaar/apartment-rental-offers-in-germany
+Certainly, here's an improved and more convincing version of the key findings:
+
+**Key Findings:**
+
+* The multimodal method, while requiring significantly more computational resources, achieves performance comparable to traditional machine learning methods.
+* This makes the multimodal method a valuable tool for tasks that involve extracting, cleaning, and validating information from text data, such as:
+	+ Leveraging the description column to extract and validate information in other columns.
+	+ Filling missing values in structural data columns by utilizing information from the text data.
+
 ## Repository Structure
 
 The repository is organized as follows:
